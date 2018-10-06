@@ -1,2 +1,2 @@
 # CS347m
-Completed assignments from the Operating Systems Minor course at IIT Bombay
+This repository contains the solutions of the assignments given as a part of the CS347M - Operating Systems Minor course in the Spring semester of 2017 at IIT Bombay.
