@@ -1,0 +1,128 @@
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#define NTHREADS 5
+char* line = NULL;
+char* token = NULL;
+size_t len = 0;
+ssize_t read;
+pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex3 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  all_slaves_not_blocked  = PTHREAD_COND_INITIALIZER;
+pthread_cond_t  slave_signalled  = PTHREAD_COND_INITIALIZER;
+pthread_cond_t  modifying_data  = PTHREAD_COND_INITIALIZER;
+int seats_available_in_flight[] = {1,2,3,4,5,6,7,8,9,10};
+int no_of_free_threads = 5;
+bool not_blocked = true;
+bool not_signalled = true;
+bool modifying = false;
+int *thread_name;
+int current_thread = 0;
+int flight_no = 0;
+
+void* master_thread_read_queries();
+void* slave_thread_update_function();
+
+main()
+{
+	 thread_name = malloc(sizeof(int));
+     pthread_t slave_thread[NTHREADS];
+     pthread_t master_thread;
+     int i, j;
+
+	 pthread_create(&master_thread, NULL, master_thread_read_queries, NULL);
+   
+     for(i=0; i < NTHREADS; i++)
+     {
+		*thread_name = i;
+        pthread_create(&slave_thread[i], NULL, slave_thread_update_function, thread_name);
+     }
+
+	 pthread_join(master_thread, NULL); 
+	 for(i=0; i < NTHREADS; i++)
+     	pthread_join(slave_thread[i], NULL); 
+     exit(0);
+}
+
+void* master_thread_read_queries()
+{
+    FILE *fptr;
+    fptr = fopen("transactions.txt","r");
+    while(true)
+	{
+		read = getline(&line, &len, fptr);
+		if(strcmp(line,"END") == 0) break;
+		pthread_mutex_lock(&mutex1);
+		while(not_blocked)
+			pthread_cond_wait(&all_slaves_not_blocked,&mutex1);
+		pthread_mutex_unlock(&mutex1);
+		pthread_mutex_lock(&mutex2);
+		printf("%s %d \n", line, current_thread); 
+		not_signalled = false;
+		pthread_cond_signal(&slave_signalled);
+		pthread_mutex_unlock(&mutex2);
+	}
+	return;
+}
+
+void* slave_thread_update_function(int* thread_name)
+{
+	while(true)
+	{
+		pthread_mutex_lock(&mutex2);
+		pthread_mutex_lock(&mutex1);
+		not_blocked = false;
+		pthread_cond_signal(&all_slaves_not_blocked);
+		pthread_mutex_unlock(&mutex1);
+		current_thread = *thread_name;
+		while(not_signalled)
+			pthread_cond_wait(&slave_signalled,&mutex2);
+		not_blocked = true;
+		pthread_mutex_unlock(&mutex2);
+		if(strcmp(line,"END") == 0) break;
+		token = strtok(line, " ");
+		flight_no = atoi(strtok(NULL, " "));
+		printf("%s\n", line);
+		printf("%d \n", current_thread);
+		if(strcmp(token,"status") == 0)
+		{
+			pthread_mutex_lock(&mutex3);
+			while(modifying)
+				pthread_cond_wait(&modifying_data,&mutex3);
+			if(seats_available_in_flight[flight_no] > 0)
+				printf("Seat Available");
+			else
+				printf("Seat Not Available");
+			pthread_mutex_unlock(&mutex3);
+		}
+		else if(strcmp(token,"book") == 0)
+		{
+			modifying = true;
+			pthread_mutex_lock(&mutex3);
+			if(seats_available_in_flight[flight_no] > 0)
+			{
+				seats_available_in_flight[flight_no]--;
+				printf("Seat Booked");
+			}
+			else
+				printf("Seat Not Available");
+			modifying = false;
+			pthread_cond_signal(&modifying_data);
+			pthread_mutex_unlock(&mutex3);
+		}
+		else if(strcmp(token,"cancel") == 0)
+		{
+			modifying = true;
+			pthread_mutex_lock(&mutex3);
+			seats_available_in_flight[flight_no]++;
+			printf("Seat Cancelled");
+			modifying = false;
+			pthread_cond_signal(&modifying_data);
+			pthread_mutex_unlock(&mutex3);
+		}
+	}			
+}
+
